@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lig Fikstürü ve Puan Durumu</title>
+<style>
+body {font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin:0; background:#f5f6fa; color:#2f3640;}
+header {background:#0097e6;color:white;text-align:center;padding:1rem;}
+h1,h2 {margin:0.5rem 0;}
+.container {max-width:1200px;margin:1rem auto;padding:0 1rem;}
+.tabs {display:flex;flex-wrap:wrap;gap:0.5rem;margin-bottom:1rem;}
+.tab-btn {background:#00a8ff;color:white;border:none;padding:0.5rem 1rem;border-radius:5px;cursor:pointer;}
+.tab-btn.active {background:#0097e6;}
+table {width:100%;border-collapse:collapse;margin-bottom:1rem;background:white;border-radius:10px;overflow:hidden;box-shadow:0 2px 5px rgba(0,0,0,0.1);}
+th,td {padding:0.5rem;text-align:center;border-bottom:1px solid #ddd;}
+th {background:#f1f2f6;}
+tr:last-child td {border-bottom:none;}
+input[type="number"], input.team-input {width:80px;padding:0.2rem;text-align:center;border-radius:5px;border:1px solid #ccc;}
+button.share-btn {background:#4cd137;color:white;border:none;padding:0.5rem 1rem;border-radius:5px;cursor:pointer;margin-bottom:1rem;}
+button.share-btn:hover {background:#44bd32;}
+@media (max-width:600px){th,td{font-size:0.8rem;padding:0.3rem;}h1{font-size:1.2rem;}}
+</style>
+</head>
+<body>
+<header>
+<h1>18 Takımlı Lig Fikstürü ve Puan Durumu</h1>
+</header>
+<div class="container">
+<h2>Takımlar</h2>
+<div id="teamsContainer"></div>
+<button onclick="saveTeams()">Takımları Kaydet ve Fikstürü Oluştur</button>
+
+<h2>Haftalar</h2>
+<div class="tabs" id="weeksTabs"></div>
+<div id="weeksContent"></div>
+
+<h2>Hafta Sonuçları</h2>
+<div id="resultsContent"></div>
+
+<h2>Puan Durumu</h2>
+<table id="tableStandings">
+<thead>
+<tr><th>#</th><th>Takım</th><th>O</th><th>G</th><th>B</th><th>M</th><th>Av</th><th>P</th></tr>
+</thead>
+<tbody id="standingsBody"></tbody>
+</table>
+<button class="share-btn" onclick="shareWhatsApp()">WhatsApp ile Paylaş</button>
+</div>
+
+<script>
+const teamCount = 18;
+let teams = JSON.parse(localStorage.getItem('ligTeams')) || Array(teamCount).fill('');
+let weeks = JSON.parse(localStorage.getItem('ligWeeks'));
+
+// Takım girişlerini oluştur
+const teamsContainer = document.getElementById('teamsContainer');
+function renderTeamInputs(){
+    teamsContainer.innerHTML='';
+    teams.forEach((t,i)=>{
+        let input = document.createElement('input');
+        input.type='text';
+        input.className='team-input';
+        input.placeholder='Takım '+(i+1);
+        input.value=t;
+        input.onchange = ()=>teams[i]=input.value;
+        teamsContainer.appendChild(input);
+    });
+}
+renderTeamInputs();
+
+// Round-Robin algoritması - Ev/Deplasman dengesi ile
+function generateFixtures(){
+    let tempTeams = [...teams];
+    if(tempTeams.length % 2 !== 0) tempTeams.push("Bay"); // tek sayı için
+    const n = tempTeams.length;
+    const rounds = [];
+
+    let teamIndexes = tempTeams.map((_,i)=>i);
+    for(let round=0; round<n-1; round++){
+        let matches = [];
+        for(let i=0; i<n/2; i++){
+            let t1 = teamIndexes[i];
+            let t2 = teamIndexes[n-1-i];
+            if(t1!=="Bay" && t2!=="Bay"){
+                if(round % 2 === 0) matches.push({home:t1,away:t2,homeScore:'',awayScore:''});
+                else matches.push({home:t2,away:t1,homeScore:'',awayScore:''});
+            }
+        }
+        rounds.push(matches);
+        // Döndürme
+        teamIndexes.splice(1,0,teamIndexes.pop());
+    }
+
+    // İkinci devre: ters sahalar
+    const secondHalf = rounds.map(r=>r.map(m=>({home:m.away,away:m.home,homeScore:'',awayScore:''})));
+    return rounds.concat(secondHalf);
+}
+
+// Takımları kaydet ve fikstürü oluştur
+function saveTeams(){
+    localStorage.setItem('ligTeams', JSON.stringify(teams));
+    weeks = generateFixtures();
+    localStorage.setItem('ligWeeks', JSON.stringify(weeks));
+    renderWeekTabs();
+    updateStandings();
+    renderResults();
+    showWeek(0);
+}
+
+// Hafta sekmeleri
+const weeksTabs=document.getElementById('weeksTabs');
+function renderWeekTabs(){
+    weeksTabs.innerHTML='';
+    weeks.forEach((_,i)=>{
+        let btn=document.createElement('button');
+        btn.className='tab-btn'+(i===0?' active':'');
+        btn.innerText='Hafta '+(i+1);
+        btn.onclick=()=>showWeek(i);
+        weeksTabs.appendChild(btn);
+    });
+}
+
+// Hafta içeriği ve sonuçlar
+const weeksContent=document.getElementById('weeksContent');
+const resultsContent=document.getElementById('resultsContent');
+function showWeek(index){
+    document.querySelectorAll('.tab-btn').forEach((b,i)=>b.className='tab-btn'+(i===index?' active':''));
+    weeksContent.innerHTML='';
+    let table=document.createElement('table');
+    table.innerHTML='<thead><tr><th>Ev Sahibi</th><th>Skor</th><th>Skor</th><th>Deplasman</th></tr></thead>';
+    let tbody=document.createElement('tbody');
+    weeks[index].forEach((match,idx)=>{
+        let tr=document.createElement('tr');
+        tr.innerHTML=`
+        <td><input type="text" class="team-input" value="${teams[match.home]}" onchange="updateTeam(${match.home},this.value)"></td>
+        <td><input type="number" min="0" value="${match.homeScore}" onchange="updateScore(${index},${idx},true,this.value)"></td>
+        <td><input type="number" min="0" value="${match.awayScore}" onchange="updateScore(${index},${idx},false,this.value)"></td>
+        <td><input type="text" class="team-input" value="${teams[match.away]}" onchange="updateTeam(${match.away},this.value)"></td>
+        `;
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    weeksContent.appendChild(table);
+    renderResults();
+}
+
+// Skor ve takım adı güncelle
+function updateScore(weekIdx, matchIdx, isHome, value){
+    weeks[weekIdx][matchIdx][isHome?'homeScore':'awayScore']=value;
+    localStorage.setItem('ligWeeks', JSON.stringify(weeks));
+    updateStandings();
+    renderResults();
+}
+function updateTeam(index, value){
+    teams[index]=value;
+    localStorage.setItem('ligTeams', JSON.stringify(teams));
+    updateStandings();
+    renderResults();
+}
+
+// Puan durumu hesapla
+function updateStandings(){
+    if(!teams || teams.length<teamCount) return;
+    let standings={};
+    teams.forEach(t=>standings[t]={team:t,O:0,G:0,B:0,M:0,Av:0,P:0});
+    weeks.flat().forEach(m=>{
+        if(m.homeScore!=='' && m.awayScore!==''){
+            const h=parseInt(m.homeScore), a=parseInt(m.awayScore);
+            standings[teams[m.home]].O++; standings[teams[m.away]].O++;
+            standings[teams[m.home]].Av+=h-a; standings[teams[m.away]].Av+=a-h;
+            if(h>a){standings[teams[m.home]].G++; standings[teams[m.away]].M++; standings[teams[m.home]].P+=3;}
+            else if(a>h){standings[teams[m.away]].G++; standings[teams[m.home]].M++; standings[teams[m.away]].P+=3;}
+            else {standings[teams[m.home]].B++; standings[teams[m.away]].B++; standings[teams[m.home]].P++; standings[teams[m.away]].P++;}
+        }
+    });
+    let sorted=Object.values(standings).sort((a,b)=>b.P - a.P || b.Av - a.Av || b.G - a.G);
+    const standingsBody=document.getElementById('standingsBody');
+    standingsBody.innerHTML='';
+    sorted.forEach((s,i)=>{
+        let tr=document.createElement('tr');
+        tr.innerHTML=`<td>${i+1}</td><td>${s.team}</td><td>${s.O}</td><td>${s.G}</td><td>${s.B}</td><td>${s.M}</td><td>${s.Av}</td><td>${s.P}</td>`;
+        standingsBody.appendChild(tr);
+    });
+}
+
+// Haftalık sonuçları göster
+function renderResults(){
+    resultsContent.innerHTML='';
+    weeks.forEach((week,wIdx)=>{
+        let weekDiv=document.createElement('div');
+        weekDiv.innerHTML=`<h3>Hafta ${wIdx+1}</h3>`;
+        let table=document.createElement('table');
+        table.innerHTML='<thead><tr><th>Ev Sahibi</th><th>Skor</th><th>Skor</th><th>Deplasman</th></tr></thead>';
+        let tbody=document.createElement('tbody');
+        weeks[wIdx].forEach(m=>{
+            let tr=document.createElement('tr');
+            tr.innerHTML=`<td>${teams[m.home]}</td><td>${m.homeScore||"-"}</td><td>${m.awayScore||"-"}</td><td>${teams[m.away]}</td>`;
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        weekDiv.appendChild(table);
+        resultsContent.appendChild(weekDiv);
+    });
+}
+
+// WhatsApp paylaş (düzgün format)
+function shareWhatsApp(){
+    let text = "🏆 Lig Puan Durumu 🏆\n\n";
+    document.querySelectorAll('#standingsBody tr').forEach(tr=>{
+        let tds = tr.querySelectorAll('td');
+        text += `${tds[0].innerText}. ${tds[1].innerText} - O:${tds[2].innerText} G:${tds[3].innerText} B:${tds[4].innerText} M:${tds[5].innerText} Av:${tds[6].innerText} P:${tds[7].innerText}\n`;
+    });
+
+    text += "\n📅 Haftalık Sonuçlar 📅\n";
+    weeks.forEach((week, wIdx)=>{
+        text += `\nHafta ${wIdx+1}:\n`;
+        week.forEach(match=>{
+            let homeName = teams[match.home] || "Takım";
+            let awayName = teams[match.away] || "Takım";
+            let homeScore = match.homeScore || "-";
+            let awayScore = match.awayScore || "-";
+            text += `${homeName} ${homeScore} - ${awayScore} ${awayName}\n`;
+        });
+    });
+
+    let url = "https://wa.me/?text=" + encodeURIComponent(text);
+    window.open(url,'_blank');
+}
+
+// İlk yükleme
+if(weeks && teams.every(t=>t)) {
+    renderWeekTabs();
+    updateStandings();
+    renderResults();
+    showWeek(0);
+}
+</script>
+</body>
+</html>
